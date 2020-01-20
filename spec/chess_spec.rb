@@ -84,13 +84,13 @@ describe Move do
       @board.board[:"41"].content = " "
       @en_passant = {pawns: []}
       @move = Move.new(@board, [@board.white_pieces, @board.black_pieces], @en_passant)
-      @move.castle[:rook] = @board.board[:"11"].content
+      @move.validator.castle[:rook] = @board.board[:"11"].content
     end
 
     it "Moves the pieces." do
       allow(@move).to receive_message_chain("validator.check_for_threat").and_return(false)
       @move.castling(@board.board[:"31"])
-      expect(@move.castle[:rook].board_node).to eql(@board.board[:"41"])
+      expect(@board.board[:"41"].content.piece_type).to eql("rook")
     end
 
     it "Doesn't move the piece to a threatened square" do
@@ -155,7 +155,7 @@ describe Validator do
 
       @board.update_piece_loc(@board.board[:"72"], @board.board[:"73"], @board.board[:"72"].content)
       @board.update_piece_loc(@board.board[:"71"], @board.board[:"75"], @board.board[:"71"].content)
-      
+
       expect(@validator.valid_move?([[6, 1], [7, 2]])).to eql(true)
       expect(@validator.valid_move?([[8, 1], [7, 2]])).to eql(false)
       expect(@validator.valid_move?([[8, 1], [7, 1]])).to eql(true)
@@ -190,6 +190,7 @@ describe Validator do
       expect(@validator.valid_move?([[5, 1], [5, 2]])).to eql(true)
       expect(@validator.valid_move?([[5, 1], [5, 3]])).to eql(false)
       expect(@validator.valid_move?([[5, 1], [3, 1]])).to eql(true)
+      expect(@validator.castle[:used]).to eql(true)
 
       @board.update_piece_loc(@board.board[:"11"], @board.board[:"14"], @board.board[:"11"].content)
       expect(@validator.valid_move?([[5, 1], [3, 1]])).to eql(false)
@@ -256,11 +257,229 @@ describe Validator do
   describe "#checkmate?" do
     before(:each) do
       @board = Board.new
-      @board.board =  Hash.new
+      @board.board.each { |_, square| square.content = " " }
       @board.white_pieces = []
       @board.black_pieces = []
-      @en_passant = Hash.new
+      @en_passant = {pawns: []}
       @validator = Validator.new(@board, [@board.white_pieces, @board.black_pieces], @en_passant)
+      @board.white_pieces << Piece.new([4, 2], "king", "white", @board.board)
+      @board.white_pieces << Piece.new([3, 2], "pawn", "white", @board.board)
+      @board.white_pieces << Piece.new([5, 2], "pawn", "white", @board.board)
+      @board.black_pieces << Piece.new([8, 1], "rook", "black", @board.board)
+      @board.black_pieces << Piece.new([6, 2], "bishop", "black", @board.board)
+      @board.black_pieces << Piece.new([5, 4], "knight", "black", @board.board)
+      @validator.player_pieces.reverse!
     end
+
+    it "Returns vs knights correctly." do
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"54"].content)).to eql(false)
+      @board.black_pieces << Piece.new([3, 4], "pawn", "black", @board.board)
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"54"].content)).to eql(true)
+      @board.white_pieces << Piece.new([6, 3], "pawn", "white", @board.board)
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"54"].content)).to eql(false)
+    end
+
+    it "Returns false correctly" do
+      @board.black_pieces << Piece.new([6, 3], "rook", "black", @board.board)
+      @board.black_pieces << Piece.new([3, 4], "pawn", "black", @board.board)
+      @board.black_pieces << Piece.new([6, 4], "bishop", "black", @board.board)
+      @board.black_pieces.delete(@board.board[:"54"].content)
+      @board.board[:"54"].content = " "
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"64"].content)).to eql(false)
+
+      @board.update_piece_loc(@board.board[:"64"], @board.board[:"51"], @board.board[:"64"].content)
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"51"].content)).to eql(false)
+
+      @board.update_piece_loc(@board.board[:"63"], @board.board[:"43"], @board.board[:"63"].content)
+      @board.update_piece_loc(@board.board[:"51"], @board.board[:"44"], @board.board[:"51"].content)
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"43"].content)).to eql(false)
+
+      @board.black_pieces << Piece.new([4, 4], "rook", "black", @board.board)
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"43"].content)).to eql(false)
+    end
+
+    it "Returns true correctly" do
+      @board.black_pieces << Piece.new([6, 3], "rook", "black", @board.board)
+      @board.black_pieces << Piece.new([3, 4], "pawn", "black", @board.board)
+      @board.black_pieces << Piece.new([4, 4], "rook", "black", @board.board)
+      @board.black_pieces.delete(@board.board[:"54"].content)
+      @board.board[:"54"].content = " "
+
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"44"].content)).to eql(true)
+
+      @board.update_piece_loc(@board.board[:"52"], @board.board[:"88"], @board.board[:"52"].content)
+      @board.white_pieces << Piece.new([5, 2], "bishop", "white", @board.board)
+      @board.black_pieces.delete(@board.board[:"62"].content)
+      @board.board[:"62"].content = " "
+      @board.black_pieces << Piece.new([6, 2], "rook", "black", @board.board)
+      expect(@validator.checkmate?(@validator.player_pieces[1], @board.board[:"44"].content)).to eql(true)
+    end
+  end
+end
+
+describe NewGame do
+  before(:each) do
+    @game = NewGame.new
+  end
+
+  it "Moves correctly" do
+    allow(@game.move).to receive("move_start").and_return([[1, 2], [1, 3]])
+    @game.turn()
+    expect(@game.board[:"13"].content.piece_type).to eql("pawn")
+    expect(@game.board[:"12"].content).to eql(" ")
+
+    @game.player.reverse!
+    @game.player_pieces.reverse!
+
+    @game.board_class.update_piece_loc(@game.board[:"68"], @game.board[:"15"], @game.board[:"68"].content)
+    allow(@game.move).to receive("move_start").and_return([[4, 2], [4, 3]], [[2, 2], [2, 3]])
+    @game.turn()
+    expect(@game.board[:"42"].content.piece_type).to eql("pawn")
+    expect(@game.board[:"43"].content).to eql(" ")
+  end
+
+  context "Castling" do
+    before(:each) do
+      @game.board_class.white_pieces.delete(@game.board[:"21"].content)
+      @game.board_class.white_pieces.delete(@game.board[:"31"].content)
+      @game.board_class.white_pieces.delete(@game.board[:"41"].content)
+      @game.board[:"21"].content = " "
+      @game.board[:"31"].content = " "
+      @game.board[:"41"].content = " "
+    end
+
+    it "Does not allow moves to threatened squares." do
+      @game.board_class.update_piece_loc(@game.board[:"18"], @game.board[:"42"], @game.board[:"18"].content)
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("e1", "c1", "a2", "a3",)
+      @game.turn()
+      expect(@game.board[:"31"].content).to eql(" ")
+    end
+
+    it "Moves normally." do
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("e1", "c1")
+      @game.turn()
+      expect(@game.board[:"31"].content.piece_type).to eql("king")
+    end
+  end
+
+  context "En passant." do
+    before(:each) do
+      @game.board_class.update_piece_loc(@game.board[:"52"], @game.board[:"55"], @game.board[:"52"].content)
+      @game.player.reverse!
+      @game.player_pieces.reverse!
+    end
+
+    it "Allows capture after double move." do
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("d7", "d5", "e5", "d6")
+      @game.turn()
+      expect(@game.en_passant[:target]).to eql(@game.board[:"45"].content)
+      expect(@game.en_passant[:pawns].include?(@game.board[:"55"].content)).to eql(true)
+      expect(@game.en_passant[:pawns].length).to eql(1)
+      @game.turn()
+      expect(@game.board[:"45"].content).to eql(" ")
+    end
+
+    it "Does not allow a capture that puts own king in check." do
+      @game.board_class.update_piece_loc(@game.board[:"18"], @game.board[:"56"], @game.board[:"18"].content)
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("d7", "d5", "e5", "d6", "a2", "a3")
+      @game.turn()
+      @game.turn()
+      expect(@game.board[:"45"].content).to_not eql(" ")
+    end
+  end
+
+  context "Promotion" do
+    before(:each) do
+      @game.board_class.update_piece_loc(@game.board[:"18"], @game.board[:"83"], @game.board[:"18"].content)
+      @game.board_class.update_piece_loc(@game.board[:"17"], @game.board[:"13"], @game.board[:"17"].content)
+      @game.board_class.update_piece_loc(@game.board[:"11"], @game.board[:"86"], @game.board[:"11"].content)
+      @game.board_class.update_piece_loc(@game.board[:"12"], @game.board[:"17"], @game.board[:"12"].content)
+      @game.board_class.update_piece_loc(@game.board[:"13"], @game.board[:"12"], @game.board[:"13"].content)
+    end
+
+    it "Promotes to Queen" do
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("a7", "a8", "a2", "a1")
+      allow(@game.board_class).to receive_message_chain("gets.chomp.downcase").and_return("queen")
+      @game.turn()
+      expect(@game.board[:"18"].content.piece_type).to eql("queen")
+      @game.turn()
+      expect(@game.board[:"11"].content.piece_type).to eql("queen")
+    end
+
+    it "Promotes to Knight" do
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("a7", "a8", "a2", "a1")
+      allow(@game.board_class).to receive_message_chain("gets.chomp.downcase").and_return("knight")
+      @game.turn()
+      expect(@game.board[:"18"].content.piece_type).to eql("knight")
+      @game.turn()
+      expect(@game.board[:"11"].content.piece_type).to eql("knight")
+    end
+
+    it "Promotes to Bishop" do
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("a7", "a8", "a2", "a1")
+      allow(@game.board_class).to receive_message_chain("gets.chomp.downcase").and_return("bishop")
+      @game.turn()
+      expect(@game.board[:"18"].content.piece_type).to eql("bishop")
+      @game.turn()
+      expect(@game.board[:"11"].content.piece_type).to eql("bishop")
+    end
+
+    it "Promotes to Rook" do
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("a7", "a8", "a2", "a1")
+      allow(@game.board_class).to receive_message_chain("gets.chomp.downcase").and_return("rook")
+      @game.turn()
+      expect(@game.board[:"18"].content.piece_type).to eql("rook")
+      @game.turn()
+      expect(@game.board[:"11"].content.piece_type).to eql("rook")
+    end
+
+    it "Finds check after promotion." do
+      @game.board_class.update_piece_loc(@game.board[:"58"], @game.board[:"28"], @game.board[:"58"].content)
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("a7", "a8")
+      allow(@game.board_class).to receive_message_chain("gets.chomp.downcase").and_return("queen")
+      expect { @game.turn() }.to output(/you are in check/).to_stdout
+    end
+  end
+
+  context "Check and Checkmate" do
+    before(:each) do
+      @game.board.each { |_, square| square.content = " " }
+      @game.board_class.white_pieces = []
+      @game.board_class.black_pieces = []
+      @game.player_pieces = [@game.board_class.white_pieces, @game.board_class.black_pieces]
+      @game.move.player_pieces = @game.player_pieces
+      @game.validator.player_pieces = @game.player_pieces
+      @game.board_class.white_pieces << Piece.new([4, 2], "king", "white", @game.board)
+      @game.board_class.white_pieces << Piece.new([3, 2], "pawn", "white", @game.board)
+      @game.board_class.white_pieces << Piece.new([5, 2], "pawn", "white", @game.board)
+      @game.board_class.black_pieces << Piece.new([8, 1], "rook", "black", @game.board)
+      @game.board_class.black_pieces << Piece.new([1, 8], "king", "black", @game.board)
+      @game.board_class.black_pieces << Piece.new([6, 2], "bishop", "black", @game.board)
+      @game.board_class.black_pieces << Piece.new([6, 6], "knight", "black", @game.board)
+      @game.player.reverse!
+      @game.player_pieces.reverse!
+    end
+
+    it "puts opponent in check." do
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("f6", "e4")
+      @game.board_class.print_board()
+      expect { @game.turn() }.to output(/you are in check/).to_stdout
+    end
+
+    it "checkmates." do
+      allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("f6", "e4")
+      @game.board_class.black_pieces << Piece.new([3, 4], "pawn", "black", @game.board)
+      expect { @game.turn() }.to output(/Checkmate. Black wins./).to_stdout
+    end
+  end
+
+  it "does cleanup." do
+    allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("a2", "a3", "a7", "a6")
+    @game.turn()
+    expect(@game.player[1]).to eql("white")
+    expect(@game.player_pieces[1][1].player).to eql("white")
+    @game.turn()
+    expect(@game.player[1]).to eql("black")
+    expect(@game.player_pieces[1][1].player).to eql("black")
   end
 end

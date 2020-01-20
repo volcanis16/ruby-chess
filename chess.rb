@@ -19,7 +19,7 @@ attr_reader :y_coord, :x_coord, :neighboring_square
                             n:  [x_coord, y_coord + 1],
                             ne: [x_coord + 1, y_coord + 1],
                             e:  [x_coord + 1, y_coord],
-                            se: [x_coord - 1, y_coord + 1],
+                            se: [x_coord + 1, y_coord - 1],
                             s:  [x_coord, y_coord - 1],
                             sw: [x_coord - 1, y_coord - 1],
                             w:  [x_coord - 1, y_coord] }
@@ -73,14 +73,16 @@ class Piece
 end
 
 class NewGame
-  attr_accessor :player, :player_pieces, :board
-
+  attr_accessor :player, :player_pieces, :board, :en_passant
+  attr_reader :board_class, :move, :validator
   def initialize
     @player = ["white", "black"]
     @board_class = Board.new
     @board = @board_class.board
     @player_pieces = [@board_class.white_pieces, @board_class.black_pieces]
     @en_passant = {pawns: []}
+    @move = Move.new(@board_class, @player_pieces, @en_passant)
+    @validator = @move.validator
   end
 
   def new_game
@@ -90,15 +92,12 @@ class NewGame
       game_over = turn()
     end
 
-    exit!
+    @board_class.print_board()
   end
 
-  private
-
   def turn
-    move = Move.new(@board_class, @player_pieces, @en_passant)
-    @validator = move.validator
-    move_coords = move.move_start(@player[0])
+    @en_passant[:used] = false
+    move_coords = @move.move_start(@player[0])
 
     target_node = @board[move_coords[1].join.to_sym]
     current_node = @board[move_coords[0].join.to_sym]
@@ -107,27 +106,33 @@ class NewGame
 
     @board_class.update_piece_loc(current_node, target_node, piece)
 
-    castle_safe = move.castling(target_node) if move.castle[:used]
+    @player_pieces[1].delete(hold_target) if hold_target != " "
+    
+    castle_safe = @move.castling(target_node) if @validator.castle[:used]
     if castle_safe == false
       @board_class.update_piece_loc(target_node, current_node, piece)
       puts "Castling here leaves the rook or king in a threatened square. Please try another move."
       turn()
     end
 
-    @en_passant = @validator.en_passant
-    @en_passant[:target].board_node.content = " " if @en_passant[:used]
+    if @en_passant[:used]
+      hold_node = @en_passant[:target].board_node
+      @en_passant[:target].board_node.content = " "
+      @player_pieces[1].delete(@en_passant[:target])
+    end
 
     if @validator.check_for_threat(@player_pieces[1], @player_pieces[0]) != nil
       puts "That move leaves you in check try another."
       @board_class.update_piece_loc(target_node, current_node, piece)
       target_node.content = hold_target
-      @en_passant[:target].board_node.content = @en_passant[:target] if @en_passant[:used]
+      @player_pieces[1] << hold_target if hold_target != " "
+      if @en_passant[:used]
+        @player_pieces[1] << @en_passant[:target]
+        hold_node.content = @en_passant[:target]
+      end
       turn()
     end
 
-    @player_pieces[1].delete(hold_target) if hold_target != " "
-    @player_pieces[1].delete(@en_passant[:target]) if @en_passant[:used]
-    
     if piece.piece_type == "pawn" && ((@player[0] == "white" && piece.y_coord == 8) ||
                                       (@player[0] == "black" && piece.y_coord == 1))
       @board_class.promotion(target_node, piece, @player_pieces[0], @player[0])
@@ -143,13 +148,15 @@ class NewGame
         puts "#{@player[1].capitalize}, you are in check."
       end
     end
-
+    
     turn_cleanup(piece)
-    @en_passant = Hash.new
+    @en_passant[:pawns] = []
     en_passant_set(target_node) if piece.piece_type == "pawn" && (current_node.y_coord - target_node.y_coord).abs > 1
 
     false
   end
+  
+  private
 
   def turn_cleanup(piece)
     piece.move_type.delete(:first)
@@ -159,7 +166,7 @@ class NewGame
   end
 
   def en_passant_set(pawn_node)
-    @en_passant[target: pawn_node.content, pawns: []]
+    @en_passant[:target] = pawn_node.content
     neighbors = [@board[pawn_node.neighboring_square[:e]], @board[pawn_node.neighboring_square[:w]]]
     neighbors.delete_if {|node| node.content == " " || node.content.piece_type != "pawn"}
     neighbors.each {|node| @en_passant[:pawns] << node.content}
@@ -207,15 +214,15 @@ class Validator
   end
 
   def checkmate?(enemy_pieces, check_piece)
+    target_node = find_king(enemy_pieces).board_node
+
+    return false if king_move_safe?(target_node)
+
     if check_piece.piece_type == "knight"
       return enemy_pieces.none? do |piece|
         valid_move?([[piece.x_coord, piece.y_coord], [check_piece.x_coord, check_piece.y_coord]])
       end
     end
-
-    target_node = find_king(enemy_pieces)
-
-    return false if king_move_safe?(target_node)
 
     direction = move_direction([[check_piece.x_coord, check_piece.y_coord], [target_node.x_coord, target_node.y_coord]])
     current_node = check_piece.board_node
@@ -227,15 +234,10 @@ class Validator
     end
 
     enemy_pieces.each do |piece|
-      if move_in_set_valid?(target_squares, piece)
-        checkmate = false
-      else
-        checkmate = true
-        break
-      end
+      return false if move_in_set_valid?(target_squares, piece)
     end
 
-    checkmate
+    true
   end
 
   private
@@ -255,10 +257,12 @@ class Validator
   end
 
   def move_in_set_valid?(target_squares, piece)
-    return target_squares.any? do |square|
+    check = false
+    target_squares.each do |square|
       if valid_move?([[piece.x_coord, piece.y_coord], [square.x_coord, square.y_coord]])
         hold_target = square.content
-        @board_class.update_piece_loc(piece.board_node, square, piece)
+        starting_node = piece.board_node
+        @board_class.update_piece_loc(starting_node, square, piece)
 
         if check_for_threat(@player_pieces[0], @player_pieces[1]) != nil
           check = false
@@ -266,14 +270,12 @@ class Validator
           check = true
         end
 
-        @board_class.update_piece_loc(square, piece.board_node, piece)
+        @board_class.update_piece_loc(square, starting_node, piece)
         square.content = hold_target
-
-        check
-      else
-        false
+        break if check == true
       end
     end
+    check
   end
 
   def move_direction(move)
@@ -349,7 +351,7 @@ class Validator
     [current_node.x_coord - 1, current_node.y_coord - 2],
     [current_node.x_coord + 1, current_node.y_coord - 2]]
 
-    return true if possible_moves.include?([target_node.x_coord, target_node.y_coord]) && target_node.content == " "
+    return true if possible_moves.include?([target_node.x_coord, target_node.y_coord])
 
     false
   end
@@ -358,6 +360,7 @@ class Validator
     return false if (current_node.y_coord - target_node.y_coord).abs > 2
 
     if (current_node.y_coord - target_node.y_coord).abs == 2
+      return false unless [:n, :s].include?(direction) && target_node.content == " "
       return false unless piece.move_type.include?(:first)
       return path_check?(current_node, target_node, piece, direction)
     end
@@ -386,7 +389,7 @@ class Validator
 end
 
 class Move
-  attr_accessor :castle
+  attr_accessor :player_pieces
   attr_reader :move, :validator
   
   def initialize(board_class, pieces, en_passant)
@@ -394,7 +397,6 @@ class Move
     @board = board_class.board
     @player_pieces = pieces
     @validator = Validator.new(@board_class, @player_pieces, en_passant)
-    @castle = @validator.castle
   end
 
   def move_start(player)
@@ -424,8 +426,8 @@ class Move
   end
 
   def castling(king_square)
-    starting_node = @castle[:rook].board_node
-    @castle[:used] = false
+    starting_node = @validator.castle[:rook].board_node
+    @validator.castle[:used] = false
 
     if starting_node.x_coord < king_square.x_coord
       target_node = @board[king_square.neighboring_square[:e]]
@@ -433,12 +435,12 @@ class Move
       target_node = @board[king_square.neighboring_square[:w]]
     end
 
-    @board_class.update_piece_loc(starting_node, target_node, @castle[:rook])
+    @board_class.update_piece_loc(starting_node, target_node, @validator.castle[:rook])
 
     if @validator.check_for_threat(@player_pieces[1], @player_pieces[0], target_node) ||
        @validator.check_for_threat(@player_pieces[1], @player_pieces[0])
     then
-      @board_class.update_piece_loc(target_node, starting_node, @castle[:rook])
+      @board_class.update_piece_loc(target_node, starting_node, @validator.castle[:rook])
       return false
     else
       true
