@@ -483,3 +483,47 @@ describe NewGame do
     expect(@game.player_pieces[1][1].player).to eql("black")
   end
 end
+
+describe "Save/Load" do
+  it "saves and loads" do
+    @game = NewGame.new
+    @game.board.each { |_, square| square.content = " " }
+    @game.board_class.white_pieces = []
+    @game.board_class.black_pieces = []
+    @game.player_pieces = [@game.board_class.white_pieces, @game.board_class.black_pieces]
+    @game.move.player_pieces = @game.player_pieces
+    @game.validator.player_pieces = @game.player_pieces
+    @game.board_class.white_pieces << Piece.new([4, 2], "king", "white", @game.board)
+    @game.board_class.white_pieces << Piece.new([3, 2], "pawn", "white", @game.board)
+    @game.board_class.white_pieces << Piece.new([5, 2], "pawn", "white", @game.board)
+    @game.board_class.black_pieces << Piece.new([8, 1], "rook", "black", @game.board)
+    @game.board_class.black_pieces << Piece.new([1, 8], "king", "black", @game.board)
+    @game.board_class.black_pieces << Piece.new([6, 2], "bishop", "black", @game.board)
+    @game.board_class.black_pieces << Piece.new([6, 6], "knight", "black", @game.board)
+    @game.board_class.black_pieces << Piece.new([6, 4], "pawn", "black", @game.board)
+
+    allow(@game.move).to receive_message_chain("gets.chomp.downcase").and_return("e2", "e4", "save", "f4", "e3")
+
+
+    @game.turn()
+    @game.turn()
+
+    @game.board.each { |_, square| square.content = " " }
+    @game.board_class.white_pieces = []
+    @game.board_class.black_pieces = []
+    @game.player_pieces = [@game.board_class.white_pieces, @game.board_class.black_pieces]
+    @game.move.player_pieces = @game.player_pieces
+    @game.validator.player_pieces = @game.player_pieces
+    
+    @game.load_game()
+    expect(@game.player[0]).to eql("black")
+    expect(@game.player_pieces).to eql([@game.board_class.black_pieces, @game.board_class.white_pieces])
+    expect(@game.board[:"64"].content.piece_type).to eql("pawn")
+    expect(@game.board[:"64"].content.player).to eql("black")
+    expect(@game.en_passant[:target]).to eql(@game.board[:"54"].content)
+    expect(@game.en_passant[:pawns]).to eql([@game.board[:"64"].content])
+    expect(@game.player_pieces[0].length).to eql(5)
+    expect(@game.player_pieces[1].length).to eql(3)
+    File.delete("save_file.yaml")
+  end
+end
