@@ -94,7 +94,7 @@ class NewGame
     puts "Would you like to load a previously saved game? y/n"
     load_game() if gets.chomp.downcase() == "y"
 
-    until game_over == true
+    until game_over
       game_over = turn()
     end
 
@@ -119,7 +119,7 @@ class NewGame
     if castle_safe == false   
       @board_class.update_piece_loc(target_node, current_node, piece)
       puts "Castling here leaves the rook or king in a threatened square. Please try another move."
-      turn()
+      return turn()
     end
 
     if @en_passant[:used]
@@ -140,7 +140,7 @@ class NewGame
         hold_node.content = @en_passant[:target]
       end
 
-      turn()
+      return turn()
     end
 
     if piece.piece_type == "pawn" && ((@player[0] == "white" && piece.y_coord == 8) ||
@@ -183,24 +183,28 @@ class NewGame
       @board[:"#{piece[0]}#{piece[1]}"].content.move_type.delete(:first) if piece[3] != "first"
     end
 
-    b_pieces.each do |piece|
-      piece = piece.split(", ")
-      @board_class.black_pieces << Piece.new([piece[0].to_i, piece[1].to_i], piece[2], "black", @board)
-      @board[:"#{piece[0]}#{piece[1]}"].content.move_type.delete(:first) if piece[3] != "first"
+    b_pieces.each do |pi|
+      pi = pi.split(", ")
+      @board_class.black_pieces << Piece.new([pi[0].to_i, pi[1].to_i], pi[2], "black", @board)
+      @board[:"#{pi[0]}#{pi[1]}"].content.move_type.delete(:first) if pi[3] != "first"
     end
 
     if save_data[0][0] == "white"
       @player = ["white", "black"]
       @player_pieces = [@board_class.white_pieces, @board_class.black_pieces]
+      @move.player_pieces = @player_pieces
+      @validator.player_pieces = @player_pieces
     else 
       @player = ["black", "white"]
       @player_pieces = [@board_class.black_pieces, @board_class.white_pieces]
+      @move.player_pieces = @player_pieces
+      @validator.player_pieces = @player_pieces
     end
 
     passant.each do |pair|
       pair = pair.split(", ")
 
-      if pair[0] == "pawns"
+      if pair[0] == "pawns" && !pair[1].nil?
         pair[1] = pair[1].split("_")
         pair[1].each { |piece| @en_passant[:pawns] << @board[:"#{piece}"].content }
       end
@@ -231,7 +235,7 @@ class NewGame
   def en_passant_set(pawn_node)
     @en_passant[:target] = pawn_node.content
     neighbors = [@board[pawn_node.neighboring_square[:e]], @board[pawn_node.neighboring_square[:w]]]
-    neighbors.delete_if {|node| node.content == " " || node.content.piece_type != "pawn"}
+    neighbors.delete_if {|node| node == nil || node.content == " " || node.content.piece_type != "pawn"}
     neighbors.each {|node| @en_passant[:pawns] << node.content}
   end
 end
@@ -695,3 +699,6 @@ class Board
     @black_pieces << Piece.new([5, 8], "king", "black", @board) << Piece.new([4, 8], "queen", "black", @board)
   end
 end
+
+@game = NewGame.new
+@game.new_game()
